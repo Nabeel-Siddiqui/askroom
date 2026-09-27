@@ -35,4 +35,30 @@ defmodule AskroomWeb.ConnCase do
     Askroom.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
+
+  @doc """
+  Setup helper that registers and logs in presenters.
+
+      setup :register_and_log_in_presenter
+
+  It stores an updated connection and a registered presenter in the
+  test context.
+  """
+  def register_and_log_in_presenter(%{conn: conn}) do
+    presenter = Askroom.AccountsFixtures.presenter_fixture()
+    %{conn: log_in_presenter(conn, presenter), presenter: presenter}
+  end
+
+  @doc """
+  Logs the given `presenter` into the `conn`.
+
+  It returns an updated `conn`.
+  """
+  def log_in_presenter(conn, presenter) do
+    token = Askroom.Accounts.generate_presenter_session_token(presenter)
+
+    conn
+    |> Phoenix.ConnTest.init_test_session(%{})
+    |> Plug.Conn.put_session(:presenter_token, token)
+  end
 end

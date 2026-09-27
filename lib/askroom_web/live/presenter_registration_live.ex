@@ -1,0 +1,87 @@
+defmodule AskroomWeb.PresenterRegistrationLive do
+  use AskroomWeb, :live_view
+
+  alias Askroom.Accounts
+  alias Askroom.Accounts.Presenter
+
+  def render(assigns) do
+    ~H"""
+    <div class="mx-auto max-w-sm">
+      <.header class="text-center">
+        Register for an account
+        <:subtitle>
+          Already registered?
+          <.link navigate={~p"/presenters/log_in"} class="font-semibold text-brand hover:underline">
+            Log in
+          </.link>
+          to your account now.
+        </:subtitle>
+      </.header>
+
+      <.simple_form
+        for={@form}
+        id="registration_form"
+        phx-submit="save"
+        phx-change="validate"
+        phx-trigger-action={@trigger_submit}
+        action={~p"/presenters/log_in?_action=registered"}
+        method="post"
+      >
+        <.error :if={@check_errors}>
+          Oops, something went wrong! Please check the errors below.
+        </.error>
+
+        <.input field={@form[:email]} type="email" label="Email" required />
+        <.input field={@form[:password]} type="password" label="Password" required />
+
+        <:actions>
+          <.button phx-disable-with="Creating account..." class="w-full">Create an account</.button>
+        </:actions>
+      </.simple_form>
+    </div>
+    """
+  end
+
+  def mount(_params, _session, socket) do
+    changeset = Accounts.change_presenter_registration(%Presenter{})
+
+    socket =
+      socket
+      |> assign(trigger_submit: false, check_errors: false)
+      |> assign_form(changeset)
+
+    {:ok, socket, temporary_assigns: [form: nil]}
+  end
+
+  def handle_event("save", %{"presenter" => presenter_params}, socket) do
+    case Accounts.register_presenter(presenter_params) do
+      {:ok, presenter} ->
+        {:ok, _} =
+          Accounts.deliver_presenter_confirmation_instructions(
+            presenter,
+            &url(~p"/presenters/confirm/#{&1}")
+          )
+
+        changeset = Accounts.change_presenter_registration(presenter)
+        {:noreply, socket |> assign(trigger_submit: true) |> assign_form(changeset)}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:noreply, socket |> assign(check_errors: true) |> assign_form(changeset)}
+    end
+  end
+
+  def handle_event("validate", %{"presenter" => presenter_params}, socket) do
+    changeset = Accounts.change_presenter_registration(%Presenter{}, presenter_params)
+    {:noreply, assign_form(socket, Map.put(changeset, :action, :validate))}
+  end
+
+  defp assign_form(socket, %Ecto.Changeset{} = changeset) do
+    form = to_form(changeset, as: "presenter")
+
+    if changeset.valid? do
+      assign(socket, form: form, check_errors: false)
+    else
+      assign(socket, form: form)
+    end
+  end
+end
