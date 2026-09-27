@@ -49,5 +49,10 @@ defmodule AskroomWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+
+  if Application.compile_env(:askroom, :sql_sandbox) do
+    plug Phoenix.Ecto.SQL.Sandbox
+  end
+
   plug AskroomWeb.Router
 end

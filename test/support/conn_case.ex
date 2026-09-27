@@ -61,4 +61,20 @@ defmodule AskroomWeb.ConnCase do
     |> Phoenix.ConnTest.init_test_session(%{})
     |> Plug.Conn.put_session(:presenter_token, token)
   end
+
+  @doc """
+  Joins `event` as a fresh anonymous participant, mirroring what
+  `AskroomWeb.JoinController` does for a real visitor, without going
+  through the controller/HTTP round trip. Returns `{conn, participant}`.
+  """
+  def join_as_participant(conn, event) do
+    {:ok, participant} = Askroom.Events.create_participant(event)
+
+    conn =
+      conn
+      |> Phoenix.ConnTest.init_test_session(%{})
+      |> Plug.Conn.put_session(AskroomWeb.ParticipantAuth.session_key(event), participant.id)
+
+    {conn, participant}
+  end
 end

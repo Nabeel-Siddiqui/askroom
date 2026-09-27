@@ -16,6 +16,14 @@ config :askroom, Askroom.Repo,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 
+# Lets Phoenix.Ecto.SQL.Sandbox (wired into the endpoint below) share a
+# test's sandbox connection with the separate process a LiveView test
+# spawns for the "connected" mount — without it, any DB call from
+# inside a LiveView's handle_event/handle_info raises
+# DBConnection.OwnershipError, since :manual-mode sandbox ownership
+# doesn't cross processes on its own.
+config :askroom, sql_sandbox: true
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :askroom, AskroomWeb.Endpoint,

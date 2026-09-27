@@ -1,0 +1,25 @@
+<div class="mx-auto max-w-sm px-4 py-16 text-center">
+  <h1 class="text-2xl font-bold text-zinc-900">Join an event</h1>
+  <p class="mt-2 text-sm text-zinc-600">
+    Enter the code your presenter shared.
+  </p>
+
+  <.form for={%{}} as={:join} action={~p"/join"} method="post" class="mt-8 space-y-4">
+    <input
+      type="text"
+      name="join_code"
+      placeholder="ABC123"
+      autocomplete="off"
+      autocapitalize="characters"
+      maxlength="6"
+      required
+      class="w-full rounded-lg border border-zinc-300 px-4 py-4 text-center text-3xl font-mono uppercase tracking-[0.3em] text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-0"
+    />
+    <button
+      type="submit"
+      class="w-full rounded-lg bg-zinc-900 px-4 py-3 text-base font-semibold text-white hover:bg-zinc-700"
+    >
+      Join
+    </button>
+  </.form>
+</div>

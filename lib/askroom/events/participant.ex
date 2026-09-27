@@ -22,6 +22,7 @@ defmodule Askroom.Events.Participant do
 
   schema "participants" do
     field :display_name, :string
+    field :last_question_submitted_at, :utc_datetime
 
     belongs_to :event, Askroom.Events.Event
 

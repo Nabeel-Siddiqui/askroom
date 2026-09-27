@@ -21,6 +21,15 @@ defmodule AskroomWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+
+    get "/join", JoinController, :new
+    post "/join", JoinController, :create
+    get "/join/:code", JoinController, :join
+
+    live_session :participant,
+      on_mount: [{AskroomWeb.ParticipantAuth, :require_participant}] do
+      live "/e/:code", AudienceLive, :show
+    end
   end
 
   # Other scopes may use custom stacks.

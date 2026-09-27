@@ -7,6 +7,7 @@ defmodule Askroom.EventsTest do
   alias Askroom.Events
   alias Askroom.Events.{Event, PollAnswer, Vote}
   alias Askroom.Repo
+  alias Ecto.Adapters.SQL.Sandbox
 
   describe "create_event/2" do
     test "creates an event owned by the presenter, open, unmoderated by default" do
@@ -313,6 +314,173 @@ defmodule Askroom.EventsTest do
                |> Repo.insert()
 
       assert "has already been taken" in errors_on(changeset).participant_id
+    end
+  end
+
+  describe "get_participant/2" do
+    test "finds a participant scoped to the event" do
+      event = event_fixture()
+      participant = participant_fixture(event)
+
+      assert {:ok, ^participant} = Events.get_participant(event, participant.id)
+    end
+
+    test "returns :not_found for a participant belonging to a different event" do
+      participant = participant_fixture(event_fixture())
+      other_event = event_fixture()
+
+      assert {:error, :not_found} = Events.get_participant(other_event, participant.id)
+    end
+
+    test "returns :not_found for a malformed id instead of raising" do
+      event = event_fixture()
+
+      assert {:error, :not_found} = Events.get_participant(event, "not-a-uuid")
+      assert {:error, :not_found} = Events.get_participant(event, nil)
+    end
+  end
+
+  describe "create_question/3 rate limiting" do
+    test "rejects a second question from the same participant within 10 seconds" do
+      event = event_fixture()
+      participant = participant_fixture(event)
+
+      assert {:ok, _question} = Events.create_question(event, participant, %{body: "First?"})
+
+      assert {:error, :rate_limited} =
+               Events.create_question(event, participant, %{body: "Second?"})
+    end
+
+    test "a different participant is not affected by another's rate limit" do
+      event = event_fixture()
+      participant_a = participant_fixture(event)
+      participant_b = participant_fixture(event)
+
+      assert {:ok, _} = Events.create_question(event, participant_a, %{body: "From A"})
+      assert {:ok, _} = Events.create_question(event, participant_b, %{body: "From B"})
+    end
+
+    test "allows another question once the rate limit window has passed" do
+      event = event_fixture()
+      participant = participant_fixture(event)
+
+      assert {:ok, _question} = Events.create_question(event, participant, %{body: "First?"})
+
+      stale = DateTime.add(DateTime.utc_now(), -11, :second) |> DateTime.truncate(:second)
+
+      {:ok, participant} =
+        Repo.update(Ecto.Changeset.change(participant, last_question_submitted_at: stale))
+
+      assert {:ok, _question} = Events.create_question(event, participant, %{body: "Second?"})
+    end
+
+    test "broadcasts the new question to the event's topic" do
+      event = event_fixture()
+      participant = participant_fixture(event)
+      :ok = Events.subscribe(event)
+
+      assert {:ok, question} = Events.create_question(event, participant, %{body: "Broadcast me"})
+      assert_receive {:question_created, ^question}
+    end
+  end
+
+  describe "list_questions/1" do
+    test "only includes visible and answered questions, sorted by votes then newest" do
+      event = event_fixture()
+
+      pending_event = event_fixture(%{moderation_enabled: true})
+      pending_participant = participant_fixture(pending_event)
+
+      _pending =
+        question_fixture(pending_event, pending_participant, %{body: "Awaiting moderation"})
+
+      # A fresh participant per question — the rate limit (correctly)
+      # refuses a second submission from the same participant in quick
+      # succession, which isn't what this test is about.
+      older = question_fixture(event, participant_fixture(event), %{body: "Older, no votes"})
+      newer = question_fixture(event, participant_fixture(event), %{body: "Newer, no votes"})
+      most_voted = question_fixture(event, participant_fixture(event), %{body: "Most voted"})
+
+      for _ <- 1..3 do
+        {:ok, _, _} = Events.toggle_vote(participant_fixture(event), most_voted)
+      end
+
+      assert Events.list_questions(event) |> Enum.map(& &1.id) == [
+               most_voted.id,
+               newer.id,
+               older.id
+             ]
+    end
+  end
+
+  describe "voted_question_ids/1" do
+    test "returns only the ids this participant voted for" do
+      event = event_fixture()
+      voter = participant_fixture(event)
+
+      voted_for = question_fixture(event, participant_fixture(event), %{body: "Voted"})
+      not_voted_for = question_fixture(event, participant_fixture(event), %{body: "Not voted"})
+
+      {:ok, :voted, _} = Events.toggle_vote(voter, voted_for)
+
+      assert Events.voted_question_ids(voter) == MapSet.new([voted_for.id])
+      refute MapSet.member?(Events.voted_question_ids(voter), not_voted_for.id)
+    end
+  end
+
+  describe "toggle_vote/2" do
+    test "casts a vote, then retracts it, then casts it again" do
+      event = event_fixture()
+      participant = participant_fixture(event)
+      question = question_fixture(event, participant_fixture(event))
+
+      assert {:ok, :voted, voted} = Events.toggle_vote(participant, question)
+      assert voted.vote_count == 1
+
+      assert {:ok, :unvoted, unvoted} = Events.toggle_vote(participant, question)
+      assert unvoted.vote_count == 0
+
+      assert {:ok, :voted, voted_again} = Events.toggle_vote(participant, question)
+      assert voted_again.vote_count == 1
+
+      assert Repo.aggregate(Vote, :count) == 1
+    end
+
+    test "broadcasts the updated question on vote and unvote" do
+      event = event_fixture()
+      participant = participant_fixture(event)
+      question = question_fixture(event, participant_fixture(event))
+      :ok = Events.subscribe(event)
+
+      {:ok, :voted, voted} = Events.toggle_vote(participant, question)
+      assert_receive {:question_voted, ^voted}
+
+      {:ok, :unvoted, unvoted} = Events.toggle_vote(participant, question)
+      assert_receive {:question_voted, ^unvoted}
+    end
+
+    test "concurrent upvotes from many participants converge on the correct count" do
+      event = event_fixture()
+      question = question_fixture(event, participant_fixture(event))
+      participants = for _ <- 1..25, do: participant_fixture(event)
+
+      parent = self()
+
+      tasks =
+        Enum.map(participants, fn participant ->
+          Task.async(fn ->
+            Sandbox.allow(Repo, parent, self())
+            Events.toggle_vote(participant, question)
+          end)
+        end)
+
+      results = Task.await_many(tasks, 10_000)
+
+      assert Enum.all?(results, &match?({:ok, :voted, _}, &1))
+
+      final = Repo.get!(Askroom.Events.Question, question.id)
+      assert final.vote_count == 25
+      assert Repo.aggregate(Vote, :count) == 25
     end
   end
 
