@@ -1,0 +1,48 @@
+# fly.toml — Fly.io deploy config for Askroom.
+#
+# This is a template: `app` and the secrets below (DATABASE_URL,
+# SECRET_KEY_BASE) still need to be provisioned with `fly launch` /
+# `fly secrets set` before `fly deploy` will work — none of that is safe
+# to hardcode here.
+app = "askroom"
+primary_region = "iad"
+
+[build]
+
+# `release_command` runs once, in its own short-lived machine, before
+# the new version is rolled out to the long-running app machines — the
+# standard place to run migrations so they always complete (or fail the
+# deploy) ahead of any request hitting new code that expects the new
+# schema. `bin/migrate` is the overlay script `mix phx.gen.release`
+# generated, which calls `Askroom.Release.migrate/0`.
+[deploy]
+  release_command = "/app/bin/migrate"
+
+[env]
+  PHX_HOST = "askroom.fly.dev"
+  PORT = "4000"
+  # Fly's internal 6PN network resolves "<app-name>.internal" to every
+  # machine running this app. dns_cluster (already in the supervision
+  # tree) polls that name and connects any nodes it finds into one
+  # Erlang cluster. Unlike a from-scratch multi-node design, nothing
+  # else has to be built for this app to run correctly across more than
+  # one machine: Phoenix.PubSub and Phoenix.Presence are both already
+  # cluster-aware once the nodes are connected — a vote or question cast
+  # against one machine broadcasts to participants connected to any
+  # other, and Presence's participant count merges across nodes
+  # automatically. `fly scale count 2` is the entire multi-node story
+  # here.
+  DNS_CLUSTER_QUERY = "askroom.internal"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

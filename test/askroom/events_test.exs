@@ -495,13 +495,15 @@ defmodule Askroom.EventsTest do
       assert_receive {:event_closed, ^closed}
     end
 
-    test "reopens a closed event" do
+    test "reopens a closed event and broadcasts :event_reopened" do
       presenter = presenter_fixture()
       event = event_fixture(%{}, presenter)
       {:ok, event} = Events.close_event(presenter, event)
+      :ok = Events.subscribe(event)
 
       assert {:ok, reopened} = Events.open_event(presenter, event)
       assert reopened.status == :open
+      assert_receive {:event_reopened, ^reopened}
     end
 
     test "refuses to close another presenter's event" do
@@ -510,6 +512,51 @@ defmodule Askroom.EventsTest do
       event = event_fixture(%{}, owner)
 
       assert {:error, :not_found} = Events.close_event(other, event)
+    end
+  end
+
+  describe "close_stale_events/0" do
+    defp backdate(event, hours_ago) do
+      timestamp =
+        DateTime.utc_now()
+        |> DateTime.add(-hours_ago * 3600, :second)
+        |> DateTime.truncate(:second)
+
+      Event |> where([e], e.id == ^event.id) |> Repo.update_all(set: [inserted_at: timestamp])
+    end
+
+    test "closes only open events older than 24 hours" do
+      stale_open = event_fixture()
+      backdate(stale_open, 25)
+
+      fresh_open = event_fixture()
+
+      presenter = presenter_fixture()
+      stale_but_closed = event_fixture(%{}, presenter)
+      backdate(stale_but_closed, 25)
+      {:ok, stale_but_closed} = Events.close_event(presenter, stale_but_closed)
+
+      assert {:ok, 1} = Events.close_stale_events()
+
+      assert Repo.reload!(stale_open).status == :closed
+      assert Repo.reload!(fresh_open).status == :open
+      assert Repo.reload!(stale_but_closed).status == :closed
+    end
+
+    test "broadcasts :event_closed for each event it closes" do
+      event = event_fixture()
+      backdate(event, 25)
+      :ok = Events.subscribe(event)
+
+      {:ok, 1} = Events.close_stale_events()
+
+      assert_receive {:event_closed, %{id: id}} when id == event.id
+    end
+
+    test "is a no-op when nothing is stale" do
+      event_fixture()
+
+      assert {:ok, 0} = Events.close_stale_events()
     end
   end
 

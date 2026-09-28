@@ -81,6 +81,7 @@ defmodule AskroomWeb.Router do
       live "/dashboard", PresenterLive.Dashboard, :index
       live "/dashboard/events/:id", PresenterLive.Show, :show
       live "/dashboard/events/:id/projector", PresenterLive.Projector, :show
+      live "/dashboard/events/:id/summary", PresenterLive.Summary, :show
     end
   end
 

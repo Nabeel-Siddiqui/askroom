@@ -69,6 +69,11 @@ config :askroom, Oban,
   repo: Askroom.Repo,
   queues: [maintenance: 1],
   plugins: [
+    # Closes events left open more than 24h, nightly at 03:00 UTC.
+    {Oban.Plugins.Cron,
+     crontab: [
+       {"0 3 * * *", Askroom.Events.CloseStaleEventsWorker}
+     ]},
     # Prunes Oban's own completed/cancelled job rows so oban_jobs doesn't
     # grow forever.
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}

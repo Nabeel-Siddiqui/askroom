@@ -133,10 +133,39 @@ defmodule Askroom.Events do
   @spec close_event(Presenter.t(), Event.t()) :: {:ok, Event.t()} | {:error, :not_found}
   def close_event(%Presenter{} = presenter, %Event{} = event) do
     with {:ok, event} <- get_event(presenter, event.id) do
-      {:ok, closed} = event |> Event.status_changeset(:closed) |> Repo.update()
-      broadcast(closed, {:event_closed, closed})
-      {:ok, closed}
+      {:ok, do_close_event(event)}
     end
+  end
+
+  defp do_close_event(event) do
+    {:ok, closed} = event |> Event.status_changeset(:closed) |> Repo.update()
+    broadcast(closed, {:event_closed, closed})
+    closed
+  end
+
+  @stale_event_hours 24
+
+  @doc """
+  Closes every `:open` event that's been running for more than
+  #{@stale_event_hours} hours, broadcasting `:event_closed` for each —
+  same as a presenter-initiated close, so any participant still on the
+  audience page reacts the same way. Called by the nightly Oban cron
+  job (`Askroom.Events.CloseStaleEventsWorker`); not exposed as a
+  presenter-facing action since it isn't scoped to one presenter — it
+  sweeps every presenter's stale events in one pass.
+  """
+  @spec close_stale_events() :: {:ok, non_neg_integer()}
+  def close_stale_events do
+    cutoff = DateTime.add(DateTime.utc_now(), -@stale_event_hours * 3600, :second)
+
+    stale_events =
+      Event
+      |> where([e], e.status == :open and e.inserted_at < ^cutoff)
+      |> Repo.all()
+
+    Enum.each(stale_events, &do_close_event/1)
+
+    {:ok, length(stale_events)}
   end
 
   @doc "Adds an anonymous participant to `event`."
