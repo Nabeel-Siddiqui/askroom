@@ -77,6 +77,10 @@ defmodule AskroomWeb.Router do
       on_mount: [{AskroomWeb.PresenterAuth, :ensure_authenticated}] do
       live "/presenters/settings", PresenterSettingsLive, :edit
       live "/presenters/settings/confirm_email/:token", PresenterSettingsLive, :confirm_email
+
+      live "/dashboard", PresenterLive.Dashboard, :index
+      live "/dashboard/events/:id", PresenterLive.Show, :show
+      live "/dashboard/events/:id/projector", PresenterLive.Projector, :show
     end
   end
 

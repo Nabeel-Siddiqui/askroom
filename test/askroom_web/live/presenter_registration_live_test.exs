@@ -17,7 +17,7 @@ defmodule AskroomWeb.PresenterRegistrationLiveTest do
         conn
         |> log_in_presenter(presenter_fixture())
         |> live(~p"/presenters/register")
-        |> follow_redirect(conn, "/")
+        |> follow_redirect(conn, "/dashboard")
 
       assert {:ok, _conn} = result
     end
@@ -45,7 +45,7 @@ defmodule AskroomWeb.PresenterRegistrationLiveTest do
       render_submit(form)
       conn = follow_trigger_action(form, conn)
 
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/dashboard"
 
       # Now do a logged in request and assert on the menu
       conn = get(conn, "/")

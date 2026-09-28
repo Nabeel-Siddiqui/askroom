@@ -18,7 +18,7 @@ defmodule AskroomWeb.PresenterLoginLiveTest do
         conn
         |> log_in_presenter(presenter_fixture())
         |> live(~p"/presenters/log_in")
-        |> follow_redirect(conn, "/")
+        |> follow_redirect(conn, "/dashboard")
 
       assert {:ok, _conn} = result
     end
@@ -38,7 +38,7 @@ defmodule AskroomWeb.PresenterLoginLiveTest do
 
       conn = submit_form(form, conn)
 
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/dashboard"
     end
 
     test "redirects to login page with a flash error if there are no valid credentials", %{

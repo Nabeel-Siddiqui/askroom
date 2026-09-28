@@ -72,6 +72,7 @@ defmodule Askroom.MixProject do
 
       # Askroom deps
       {:oban, "~> 2.18"},
+      {:eqrcode, "~> 0.2.0"},
 
       # Dev/test tooling
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

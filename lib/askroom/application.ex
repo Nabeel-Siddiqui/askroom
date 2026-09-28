@@ -15,6 +15,7 @@ defmodule Askroom.Application do
       # Start the Finch HTTP client for sending emails
       {Finch, name: Askroom.Finch},
       {Oban, Application.fetch_env!(:askroom, Oban)},
+      AskroomWeb.Presence,
       # Start to serve requests, typically the last entry
       AskroomWeb.Endpoint
     ]

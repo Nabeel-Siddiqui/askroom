@@ -25,7 +25,7 @@ defmodule AskroomWeb.PresenterAuthTest do
       assert get_session(conn, :live_socket_id) ==
                "presenters_sessions:#{Base.url_encode64(token)}"
 
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/dashboard"
       assert Accounts.get_presenter_by_session_token(token)
     end
 
@@ -252,7 +252,7 @@ defmodule AskroomWeb.PresenterAuthTest do
         |> PresenterAuth.redirect_if_presenter_is_authenticated([])
 
       assert conn.halted
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/dashboard"
     end
 
     test "does not redirect if presenter is not authenticated", %{conn: conn} do

@@ -11,7 +11,7 @@ defmodule Askroom.Events do
   import Ecto.Query, warn: false
 
   alias Askroom.Accounts.Presenter
-  alias Askroom.Events.{Event, Participant, Poll, Question, Vote}
+  alias Askroom.Events.{Event, Participant, Poll, PollAnswer, Question, Vote}
   alias Askroom.Repo
 
   @max_join_code_attempts 5
@@ -54,15 +54,18 @@ defmodule Askroom.Events do
     end
   end
 
-  @doc "Fetches an event by id, scoped to `presenter`."
+  @doc """
+  Fetches an event by id, scoped to `presenter`. `id` comes straight from
+  a route param on `/dashboard/events/:id`, so a non-numeric value is
+  treated as not-found rather than raising an `Ecto.Query.CastError`.
+  """
   @spec get_event(Presenter.t(), term()) :: {:ok, Event.t()} | {:error, :not_found}
   def get_event(%Presenter{} = presenter, id) do
-    Event
-    |> where([e], e.presenter_id == ^presenter.id and e.id == ^id)
-    |> Repo.one()
-    |> case do
-      nil -> {:error, :not_found}
-      event -> {:ok, event}
+    with {int_id, ""} <- Integer.parse(to_string(id)),
+         %Event{} = event <- Repo.get_by(Event, id: int_id, presenter_id: presenter.id) do
+      {:ok, event}
+    else
+      _ -> {:error, :not_found}
     end
   end
 
@@ -102,6 +105,37 @@ defmodule Askroom.Events do
       event
       |> Event.changeset(attrs)
       |> Repo.update()
+    end
+  end
+
+  @doc """
+  Reopens a closed event, scoped to `presenter`. Broadcasts
+  `:event_reopened` — the symmetric counterpart to `close_event/2`'s
+  `:event_closed`, so a participant already on the audience page when a
+  presenter reopens sees the "this event has ended" banner clear rather
+  than staying stuck once closed.
+  """
+  @spec open_event(Presenter.t(), Event.t()) :: {:ok, Event.t()} | {:error, :not_found}
+  def open_event(%Presenter{} = presenter, %Event{} = event) do
+    with {:ok, event} <- get_event(presenter, event.id) do
+      {:ok, reopened} = event |> Event.status_changeset(:open) |> Repo.update()
+      broadcast(reopened, {:event_reopened, reopened})
+      {:ok, reopened}
+    end
+  end
+
+  @doc """
+  Closes an event, scoped to `presenter`. Broadcasts `:event_closed` so
+  the audience page can stop accepting new questions/votes and show that
+  the event has ended, instead of silently continuing to accept input
+  nobody will ever see acted on.
+  """
+  @spec close_event(Presenter.t(), Event.t()) :: {:ok, Event.t()} | {:error, :not_found}
+  def close_event(%Presenter{} = presenter, %Event{} = event) do
+    with {:ok, event} <- get_event(presenter, event.id) do
+      {:ok, closed} = event |> Event.status_changeset(:closed) |> Repo.update()
+      broadcast(closed, {:event_closed, closed})
+      {:ok, closed}
     end
   end
 
@@ -185,6 +219,140 @@ defmodule Askroom.Events do
   end
 
   @doc """
+  Fetches a poll by id, scoped to `event`. Same defensive non-numeric-id
+  handling as `get_question/2`.
+  """
+  @spec get_poll(Event.t(), term()) :: {:ok, Poll.t()} | {:error, :not_found}
+  def get_poll(%Event{} = event, id) do
+    with {int_id, ""} <- Integer.parse(to_string(id)),
+         %Poll{} = poll <- Repo.get_by(Poll, id: int_id, event_id: event.id) do
+      {:ok, poll}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  @doc "Lists `event`'s polls, newest first."
+  @spec list_polls(Event.t()) :: [Poll.t()]
+  def list_polls(%Event{} = event) do
+    Poll
+    |> where([p], p.event_id == ^event.id)
+    |> order_by([p], desc: p.inserted_at, desc: p.id)
+    |> Repo.all()
+  end
+
+  @doc "The currently live poll for `event`, if any."
+  @spec current_live_poll(Event.t()) :: Poll.t() | nil
+  def current_live_poll(%Event{} = event) do
+    Poll
+    |> where([p], p.event_id == ^event.id and p.status == :live)
+    |> order_by([p], desc: p.inserted_at, desc: p.id)
+    |> limit(1)
+    |> Repo.one()
+  end
+
+  @doc """
+  Launches a draft poll, making it live for the audience. Only one poll
+  is meant to be live at a time, so this also closes any other poll
+  already live for the same event first — a presenter clicking "launch"
+  on poll B while poll A is still live almost certainly means "move on
+  to B," not "run both at once."
+  """
+  @spec launch_poll(Presenter.t(), Event.t(), Poll.t()) :: {:ok, Poll.t()} | {:error, :not_found}
+  def launch_poll(%Presenter{} = presenter, %Event{} = event, %Poll{} = poll) do
+    with {:ok, event} <- get_event(presenter, event.id),
+         {:ok, poll} <- get_poll(event, poll.id) do
+      Poll
+      |> where([p], p.event_id == ^event.id and p.status == :live and p.id != ^poll.id)
+      |> Repo.update_all(set: [status: :closed])
+
+      {:ok, launched} = poll |> Poll.status_changeset(:live) |> Repo.update()
+      broadcast(event, {:poll_launched, launched})
+      {:ok, launched}
+    end
+  end
+
+  @doc "Closes a live poll, freezing its results."
+  @spec close_poll(Presenter.t(), Event.t(), Poll.t()) :: {:ok, Poll.t()} | {:error, :not_found}
+  def close_poll(%Presenter{} = presenter, %Event{} = event, %Poll{} = poll) do
+    with {:ok, event} <- get_event(presenter, event.id),
+         {:ok, poll} <- get_poll(event, poll.id) do
+      {:ok, closed} = poll |> Poll.status_changeset(:closed) |> Repo.update()
+      broadcast(event, {:poll_closed, closed})
+      {:ok, closed}
+    end
+  end
+
+  @doc """
+  Vote counts per option for `poll`, in the poll's own option order —
+  ready to feed straight into a bar chart's labels and values, including
+  a `0` for any option nobody has chosen yet rather than omitting it.
+  """
+  @spec poll_results(Poll.t()) :: [{String.t(), non_neg_integer()}]
+  def poll_results(%Poll{} = poll) do
+    counts =
+      PollAnswer
+      |> where([a], a.poll_id == ^poll.id)
+      |> group_by([a], a.option)
+      |> select([a], {a.option, count(a.id)})
+      |> Repo.all()
+      |> Map.new()
+
+    Enum.map(poll.options, fn option -> {option, Map.get(counts, option, 0)} end)
+  end
+
+  @doc "Whether `participant` has already answered `poll`."
+  @spec answered_poll?(Participant.t(), Poll.t()) :: boolean()
+  def answered_poll?(%Participant{} = participant, %Poll{} = poll) do
+    PollAnswer
+    |> where([a], a.participant_id == ^participant.id and a.poll_id == ^poll.id)
+    |> Repo.exists?()
+  end
+
+  @doc """
+  Records `participant`'s answer to `poll`. Rejects with
+  `{:error, :poll_not_live}` if the poll isn't currently live,
+  `{:error, :invalid_option}` if `option` isn't one of the poll's own
+  options, or `{:error, :already_answered}` if this participant already
+  answered — the same database-enforced, one-per-participant guarantee
+  as voting (the unique index on `poll_answers(participant_id, poll_id)`
+  is what actually makes this true, this function just turns a violation
+  of it into a clean error instead of a raised exception).
+  """
+  @spec answer_poll(Event.t(), Participant.t(), Poll.t(), String.t()) ::
+          {:ok, PollAnswer.t()}
+          | {:error, :poll_not_live | :invalid_option | :already_answered | Ecto.Changeset.t()}
+  def answer_poll(%Event{} = event, %Participant{} = participant, %Poll{} = poll, option) do
+    cond do
+      poll.status != :live -> {:error, :poll_not_live}
+      option not in poll.options -> {:error, :invalid_option}
+      true -> insert_poll_answer(event, participant, poll, option)
+    end
+  end
+
+  defp insert_poll_answer(event, participant, poll, option) do
+    %PollAnswer{}
+    |> PollAnswer.changeset(%{option: option, participant_id: participant.id, poll_id: poll.id})
+    |> Repo.insert()
+    |> case do
+      {:ok, answer} ->
+        broadcast(event, {:poll_answered, poll.id})
+        {:ok, answer}
+
+      {:error, changeset} ->
+        classify_poll_answer_error(changeset)
+    end
+  end
+
+  defp classify_poll_answer_error(changeset) do
+    if Keyword.has_key?(changeset.errors, :participant_id) do
+      {:error, :already_answered}
+    else
+      {:error, changeset}
+    end
+  end
+
+  @doc """
   Fetches a question by id, scoped to `event`. `id` comes straight from
   a `phx-value-id` on the client, so a non-numeric value is treated as
   not-found rather than raising an `Ecto.Query.CastError`.
@@ -196,6 +364,51 @@ defmodule Askroom.Events do
       {:ok, question}
     else
       _ -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Lists `event`'s questions for the presenter's moderation view: every
+  status except `:hidden`, sorted by vote count then newest. Unlike
+  `list_questions/1` (the audience view), this includes `:pending`
+  questions awaiting a moderation decision — the whole point of this
+  list is to be the place a presenter makes that decision.
+  """
+  @spec list_questions_for_presenter(Event.t()) :: [Question.t()]
+  def list_questions_for_presenter(%Event{} = event) do
+    Question
+    |> where([q], q.event_id == ^event.id and q.status != :hidden)
+    |> order_by([q], desc: q.vote_count, desc: q.inserted_at, desc: q.id)
+    |> Repo.all()
+  end
+
+  @doc "Approves a pending question, making it visible to the audience."
+  @spec approve_question(Presenter.t(), Event.t(), Question.t()) ::
+          {:ok, Question.t()} | {:error, :not_found}
+  def approve_question(%Presenter{} = presenter, %Event{} = event, %Question{} = question) do
+    set_question_status(presenter, event, question, :visible)
+  end
+
+  @doc "Marks a question as answered."
+  @spec mark_question_answered(Presenter.t(), Event.t(), Question.t()) ::
+          {:ok, Question.t()} | {:error, :not_found}
+  def mark_question_answered(%Presenter{} = presenter, %Event{} = event, %Question{} = question) do
+    set_question_status(presenter, event, question, :answered)
+  end
+
+  @doc "Hides a question from the audience."
+  @spec hide_question(Presenter.t(), Event.t(), Question.t()) ::
+          {:ok, Question.t()} | {:error, :not_found}
+  def hide_question(%Presenter{} = presenter, %Event{} = event, %Question{} = question) do
+    set_question_status(presenter, event, question, :hidden)
+  end
+
+  defp set_question_status(presenter, event, question, status) do
+    with {:ok, event} <- get_event(presenter, event.id),
+         {:ok, question} <- get_question(event, question.id) do
+      {:ok, updated} = question |> Question.status_changeset(status) |> Repo.update()
+      broadcast(event, {:question_status_changed, updated})
+      {:ok, updated}
     end
   end
 
@@ -308,6 +521,16 @@ defmodule Askroom.Events do
   def subscribe(%Event{} = event) do
     Phoenix.PubSub.subscribe(Askroom.PubSub, topic(event.id))
   end
+
+  @doc """
+  The `Phoenix.Presence` topic for `event`'s live participant count —
+  deliberately the same string `subscribe/1` uses, so a presenter's
+  LiveView (already subscribed for question/poll updates) receives
+  Presence's own `"presence_diff"` broadcasts on that same subscription
+  for free, with no second topic to track.
+  """
+  @spec presence_topic(Event.t()) :: String.t()
+  def presence_topic(%Event{} = event), do: topic(event.id)
 
   defp broadcast(%Event{id: event_id}, message), do: broadcast(event_id, message)
 

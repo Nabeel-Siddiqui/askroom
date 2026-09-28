@@ -484,6 +484,197 @@ defmodule Askroom.EventsTest do
     end
   end
 
+  describe "open_event/2 and close_event/2" do
+    test "closes an open event and broadcasts :event_closed" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      :ok = Events.subscribe(event)
+
+      assert {:ok, closed} = Events.close_event(presenter, event)
+      assert closed.status == :closed
+      assert_receive {:event_closed, ^closed}
+    end
+
+    test "reopens a closed event" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      {:ok, event} = Events.close_event(presenter, event)
+
+      assert {:ok, reopened} = Events.open_event(presenter, event)
+      assert reopened.status == :open
+    end
+
+    test "refuses to close another presenter's event" do
+      owner = presenter_fixture()
+      other = presenter_fixture()
+      event = event_fixture(%{}, owner)
+
+      assert {:error, :not_found} = Events.close_event(other, event)
+    end
+  end
+
+  describe "question moderation" do
+    test "approve_question/3 makes a pending question visible" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{moderation_enabled: true}, presenter)
+      participant = participant_fixture(event)
+      {:ok, question} = Events.create_question(event, participant, %{body: "Pending?"})
+      assert question.status == :pending
+
+      :ok = Events.subscribe(event)
+      assert {:ok, approved} = Events.approve_question(presenter, event, question)
+      assert approved.status == :visible
+      assert_receive {:question_status_changed, ^approved}
+    end
+
+    test "mark_question_answered/3 and hide_question/3 transition status" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      question = question_fixture(event, participant_fixture(event))
+
+      assert {:ok, answered} = Events.mark_question_answered(presenter, event, question)
+      assert answered.status == :answered
+
+      assert {:ok, hidden} = Events.hide_question(presenter, event, answered)
+      assert hidden.status == :hidden
+    end
+
+    test "moderation actions are scoped to the presenter who owns the event" do
+      owner = presenter_fixture()
+      other = presenter_fixture()
+      event = event_fixture(%{}, owner)
+      question = question_fixture(event, participant_fixture(event))
+
+      assert {:error, :not_found} = Events.approve_question(other, event, question)
+      assert {:error, :not_found} = Events.hide_question(other, event, question)
+    end
+  end
+
+  describe "list_questions_for_presenter/1" do
+    test "includes pending questions, excludes hidden ones" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{moderation_enabled: true}, presenter)
+
+      pending = question_fixture(event, participant_fixture(event), %{body: "Pending"})
+
+      to_hide = question_fixture(event, participant_fixture(event), %{body: "Will be hidden"})
+      {:ok, _} = Events.hide_question(presenter, event, to_hide)
+
+      ids = Events.list_questions_for_presenter(event) |> Enum.map(& &1.id)
+      assert pending.id in ids
+      refute to_hide.id in ids
+    end
+  end
+
+  describe "poll lifecycle" do
+    test "launch_poll/3 makes a draft poll live and broadcasts" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event)
+      :ok = Events.subscribe(event)
+
+      assert {:ok, launched} = Events.launch_poll(presenter, event, poll)
+      assert launched.status == :live
+      assert_receive {:poll_launched, ^launched}
+    end
+
+    test "launching a new poll closes any other poll already live" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll_a = poll_fixture(presenter, event, %{question_text: "A?"})
+      poll_b = poll_fixture(presenter, event, %{question_text: "B?"})
+
+      {:ok, _} = Events.launch_poll(presenter, event, poll_a)
+      assert {:ok, _} = Events.launch_poll(presenter, event, poll_b)
+
+      assert {:ok, %{status: :closed}} = Events.get_poll(event, poll_a.id)
+      assert Events.current_live_poll(event).id == poll_b.id
+    end
+
+    test "close_poll/3 freezes a live poll" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event)
+      {:ok, poll} = Events.launch_poll(presenter, event, poll)
+
+      :ok = Events.subscribe(event)
+      assert {:ok, closed} = Events.close_poll(presenter, event, poll)
+      assert closed.status == :closed
+      assert_receive {:poll_closed, ^closed}
+      assert Events.current_live_poll(event) == nil
+    end
+
+    test "polls are scoped to the presenter who owns the event" do
+      owner = presenter_fixture()
+      other = presenter_fixture()
+      event = event_fixture(%{}, owner)
+      poll = poll_fixture(owner, event)
+
+      assert {:error, :not_found} = Events.launch_poll(other, event, poll)
+    end
+  end
+
+  describe "poll_results/1" do
+    test "includes every option, 0 for ones nobody chose" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event, %{options: ["Rust", "Elixir", "Go"]})
+      {:ok, poll} = Events.launch_poll(presenter, event, poll)
+
+      {:ok, _} = Events.answer_poll(event, participant_fixture(event), poll, "Elixir")
+      {:ok, _} = Events.answer_poll(event, participant_fixture(event), poll, "Elixir")
+      {:ok, _} = Events.answer_poll(event, participant_fixture(event), poll, "Rust")
+
+      assert Events.poll_results(poll) == [{"Rust", 1}, {"Elixir", 2}, {"Go", 0}]
+    end
+  end
+
+  describe "answer_poll/4" do
+    test "records an answer and broadcasts :poll_answered" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event)
+      {:ok, poll} = Events.launch_poll(presenter, event, poll)
+      participant = participant_fixture(event)
+      :ok = Events.subscribe(event)
+
+      assert {:ok, _answer} = Events.answer_poll(event, participant, poll, "Search")
+      assert_receive {:poll_answered, poll_id}
+      assert poll_id == poll.id
+    end
+
+    test "rejects answering a poll that isn't live" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event)
+      participant = participant_fixture(event)
+
+      assert {:error, :poll_not_live} = Events.answer_poll(event, participant, poll, "Search")
+    end
+
+    test "rejects an option that isn't one of the poll's own" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event)
+      {:ok, poll} = Events.launch_poll(presenter, event, poll)
+      participant = participant_fixture(event)
+
+      assert {:error, :invalid_option} =
+               Events.answer_poll(event, participant, poll, "Nonexistent")
+    end
+
+    test "rejects a second answer from the same participant" do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event)
+      {:ok, poll} = Events.launch_poll(presenter, event, poll)
+      participant = participant_fixture(event)
+
+      assert {:ok, _} = Events.answer_poll(event, participant, poll, "Search")
+      assert {:error, :already_answered} = Events.answer_poll(event, participant, poll, "Exports")
+    end
+  end
+
   describe "Event.generate_join_code/0" do
     test "never produces ambiguous characters" do
       for _ <- 1..200 do

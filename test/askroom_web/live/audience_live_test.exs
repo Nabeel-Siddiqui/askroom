@@ -2,6 +2,7 @@ defmodule AskroomWeb.AudienceLiveTest do
   use AskroomWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
+  import Askroom.AccountsFixtures
   import Askroom.EventsFixtures
 
   alias Askroom.Events
@@ -159,6 +160,86 @@ defmodule AskroomWeb.AudienceLiveTest do
       view_a |> element("button[phx-value-id='#{question.id}']") |> render_click()
 
       assert render(view_b) =~ ">1<"
+    end
+  end
+
+  describe "answering a poll" do
+    test "shows a live poll's options and records an answer", %{conn: conn} do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event, %{options: ["Cats", "Dogs"]})
+      {:ok, poll} = Events.launch_poll(presenter, event, poll)
+      {conn, _participant} = join_as_participant(conn, event)
+
+      {:ok, view, html} = live(conn, ~p"/e/#{event.join_code}")
+      assert html =~ "Cats"
+      assert html =~ "Dogs"
+
+      view |> element("button[phx-value-option='Cats']") |> render_click()
+      assert render(view) =~ "recorded"
+
+      assert Events.poll_results(poll) == [{"Cats", 1}, {"Dogs", 0}]
+    end
+
+    test "a poll launched while already on the page appears without a refresh", %{conn: conn} do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event, %{options: ["Yes", "No"]})
+      {conn, _participant} = join_as_participant(conn, event)
+
+      {:ok, view, html} = live(conn, ~p"/e/#{event.join_code}")
+      refute html =~ poll.question_text
+
+      {:ok, _} = Events.launch_poll(presenter, event, poll)
+
+      assert render(view) =~ poll.question_text
+    end
+
+    test "a closed poll no longer accepts answers on the audience page", %{conn: conn} do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      poll = poll_fixture(presenter, event)
+      {:ok, poll} = Events.launch_poll(presenter, event, poll)
+      {conn, _participant} = join_as_participant(conn, event)
+
+      {:ok, view, html} = live(conn, ~p"/e/#{event.join_code}")
+      assert html =~ poll.question_text
+
+      {:ok, _} = Events.close_poll(presenter, event, poll)
+
+      refute render(view) =~ poll.question_text
+    end
+  end
+
+  describe "the event closing and reopening" do
+    test "shows a banner and disables voting once the presenter closes the event", %{conn: conn} do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      question = question_fixture(event, participant_fixture(event))
+      {conn, _participant} = join_as_participant(conn, event)
+
+      {:ok, view, html} = live(conn, ~p"/e/#{event.join_code}")
+      refute html =~ "This event has ended"
+
+      {:ok, _} = Events.close_event(presenter, event)
+
+      html = render(view)
+      assert html =~ "This event has ended"
+      assert view |> element("button[phx-value-id='#{question.id}']") |> render() =~ "disabled"
+    end
+
+    test "the banner clears if the presenter reopens the event", %{conn: conn} do
+      presenter = presenter_fixture()
+      event = event_fixture(%{}, presenter)
+      {:ok, event} = Events.close_event(presenter, event)
+      {conn, _participant} = join_as_participant(conn, event)
+
+      {:ok, view, html} = live(conn, ~p"/e/#{event.join_code}")
+      assert html =~ "This event has ended"
+
+      {:ok, _} = Events.open_event(presenter, event)
+
+      refute render(view) =~ "This event has ended"
     end
   end
 end

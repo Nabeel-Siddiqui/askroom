@@ -21,7 +21,7 @@ defmodule AskroomWeb.PresenterForgotPasswordLiveTest do
         conn
         |> log_in_presenter(presenter_fixture())
         |> live(~p"/presenters/reset_password")
-        |> follow_redirect(conn, ~p"/")
+        |> follow_redirect(conn, ~p"/dashboard")
 
       assert {:ok, _conn} = result
     end
