@@ -54,14 +54,10 @@ defmodule Askroom.Events do
     end
   end
 
-  @doc """
-  Fetches an event by id, scoped to `presenter`. `id` comes straight from
-  a route param on `/dashboard/events/:id`, so a non-numeric value is
-  treated as not-found rather than raising an `Ecto.Query.CastError`.
-  """
+  @doc "Fetches an event by id, scoped to `presenter`."
   @spec get_event(Presenter.t(), term()) :: {:ok, Event.t()} | {:error, :not_found}
   def get_event(%Presenter{} = presenter, id) do
-    with {int_id, ""} <- Integer.parse(to_string(id)),
+    with {:ok, int_id} <- cast_id(id),
          %Event{} = event <- Repo.get_by(Event, id: int_id, presenter_id: presenter.id) do
       {:ok, event}
     else
@@ -247,13 +243,10 @@ defmodule Askroom.Events do
     end
   end
 
-  @doc """
-  Fetches a poll by id, scoped to `event`. Same defensive non-numeric-id
-  handling as `get_question/2`.
-  """
+  @doc "Fetches a poll by id, scoped to `event`."
   @spec get_poll(Event.t(), term()) :: {:ok, Poll.t()} | {:error, :not_found}
   def get_poll(%Event{} = event, id) do
-    with {int_id, ""} <- Integer.parse(to_string(id)),
+    with {:ok, int_id} <- cast_id(id),
          %Poll{} = poll <- Repo.get_by(Poll, id: int_id, event_id: event.id) do
       {:ok, poll}
     else
@@ -381,14 +374,10 @@ defmodule Askroom.Events do
     end
   end
 
-  @doc """
-  Fetches a question by id, scoped to `event`. `id` comes straight from
-  a `phx-value-id` on the client, so a non-numeric value is treated as
-  not-found rather than raising an `Ecto.Query.CastError`.
-  """
+  @doc "Fetches a question by id, scoped to `event`."
   @spec get_question(Event.t(), term()) :: {:ok, Question.t()} | {:error, :not_found}
   def get_question(%Event{} = event, id) do
-    with {int_id, ""} <- Integer.parse(to_string(id)),
+    with {:ok, int_id} <- cast_id(id),
          %Question{} = question <- Repo.get_by(Question, id: int_id, event_id: event.id) do
       {:ok, question}
     else
@@ -568,4 +557,16 @@ defmodule Askroom.Events do
   end
 
   defp topic(event_id), do: "event:#{event_id}"
+
+  # Shared by every get_*/2 scoped lookup in this module: their id
+  # always comes straight from a route param or a phx-value-id, neither
+  # of which is validated, so casting it to an integer here (instead of
+  # letting Ecto's query interpolation try to cast it) turns a malformed
+  # value into a plain not-found instead of an Ecto.Query.CastError.
+  defp cast_id(id) do
+    case Integer.parse(to_string(id)) do
+      {int_id, ""} -> {:ok, int_id}
+      _ -> :error
+    end
+  end
 end

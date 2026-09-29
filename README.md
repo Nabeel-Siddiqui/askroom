@@ -1,38 +1,38 @@
 # Askroom
 
-Live Q&A and polling for talks and meetings: the audience joins on
-their phones with a short code — no account, no app download — asks
-questions, upvotes the ones they care about, and answers polls, with
-every screen in the room (including the presenter's, and a projector)
-updating in real time. Built end-to-end in Elixir/Phoenix/OTP as a
-portfolio project.
+Live Q&A and polling for talks and meetings. The audience joins on
+their phones with a short code (no account, no app download), asks
+questions, upvotes the ones they care about, and answers polls. Every
+screen in the room updates in real time, including the presenter's and
+a projector. Built end-to-end in Elixir/Phoenix/OTP as a portfolio
+project.
 
 **[Live demo](#) · [Screenshot / demo GIF: a phone and a laptop updating side by side](#)**
-*(placeholders — fill in once deployed; see [fly.toml](fly.toml))*
+*(placeholders, to fill in once deployed; see [fly.toml](fly.toml))*
 
 Log in with the seeded demo presenter (`demo@askroom.dev` /
-`demo-password-please-change`, created automatically by `mix setup`) to
-see a sample event with real questions and a live poll already in it —
+`demo-password-please-change`, created automatically by `mix setup`).
+A sample event with real questions and a live poll is already there;
 its join code is on the presenter's dashboard.
 
 ## What it does
 
-- A presenter creates an event and gets a short, unambiguous 6-character
-  join code (no `0`/`O` or `1`/`I` — the pairs people misread when a
-  code is projected across a room) and a QR code that points straight
-  at it.
-- The audience joins at `/join` or by scanning the code — no signup.
-  Refreshing the page, or coming back later, keeps the same identity
-  and the same votes, because it's carried in the browser session, not
-  typed credentials.
-- Questions are upvoted by tapping a button that toggles on/off, sorted
-  live by vote count then newest. An optional moderation mode holds new
-  questions for the presenter's approval before the audience sees them.
+- A presenter creates an event and gets a short, unambiguous
+  6-character join code. The alphabet skips `0`/`O` and `1`/`I`, the
+  pairs people misread when a code is projected across a room. A QR
+  code points straight at it.
+- The audience joins at `/join` or by scanning the code, with no
+  signup. Identity and votes are carried in the browser session, so
+  refreshing the page or coming back later keeps both.
+- Questions are upvoted by tapping a button that toggles on and off,
+  sorted live by vote count then newest. An optional moderation mode
+  holds new questions for the presenter's approval before the audience
+  sees them.
 - The presenter launches a poll and watches results update live as a
   bar chart; closing it freezes the results. The audience answers with
   one tap, one answer per participant, enforced by the database.
-- A "projector" view — clean, full-screen, large text — automatically
-  shows whichever is more relevant: a live poll's results while one's
+- A "projector" view (clean, full-screen, large text) shows whichever
+  is more relevant on its own: a live poll's results while one's
   running, the top questions otherwise. No manual toggle.
 - A live "N people here now" count via `Phoenix.Presence`.
 - Closing an event freezes it and produces a summary: top questions,
@@ -41,38 +41,36 @@ its join code is on the presenter's dashboard.
 
 ## Why Elixir for this, specifically
 
-This is a many-small-processes, many-live-updates problem — dozens to
+This is a many-small-processes, many-live-updates problem: dozens to
 hundreds of independent phones and a couple of dashboards, all needing
 to see the same event's changes within milliseconds of each other, with
 no single request/response cycle that ever "finishes." That's close to
-the shape of problem the BEAM was built for, and this app leans on that
-directly rather than incidentally:
+the shape of problem the BEAM was built for. This app leans on that
+directly rather than incidentally.
 
-- **One PubSub topic per event, and every screen — including the one
-  that just took the action — reacts through it.** A participant's own
-  vote updates their own screen the exact same way it updates everyone
-  else's: through `Phoenix.PubSub`, not a special-cased local update.
-  That's one code path to reason about instead of two, and it's a
-  design LiveView makes genuinely easy — see
-  [ADR 3](docs/decisions/0003-per-event-pubsub-topics.md) for the sharp
-  edge this creates in tests and why it's worth understanding rather
-  than working around.
-- **`Phoenix.Presence` for the "who's here" count**, because it already
-  solves the hard, easy-to-get-wrong parts of that problem — merging
-  presence state cleanly if this app ever ran on more than one node,
-  handling a phone disconnecting without a clean goodbye — instead of
-  this app needing to reinvent any of it.
-- **The database as the actual source of correctness**, not the
-  language. OTP makes it cheap to have many concurrent processes; it
-  doesn't make "two people tap upvote in the same millisecond" correct
-  by default. This app leans on Postgres — a unique index, an atomic
-  `UPDATE ... SET vote_count = vote_count + 1` — for the guarantees that
-  actually matter under concurrency, rather than trying to serialize
-  everything through a single process. See
+- **One PubSub topic per event, and every screen reacts through it, including the one that just took the action.**
+  A participant's own vote updates their own screen the same way it
+  updates everyone else's, through `Phoenix.PubSub`. There's no
+  separate, special-cased path for "my own update." That's one code
+  path to reason about instead of two, and LiveView makes it genuinely
+  easy to build this way. [ADR 3](docs/decisions/0003-per-event-pubsub-topics.md)
+  covers the sharp edge this creates in tests and why it's worth
+  understanding rather than working around.
+- **`Phoenix.Presence` handles the "who's here" count.** It already
+  solves the hard parts of that problem: merging presence state cleanly
+  if this app ever ran on more than one node, and handling a phone
+  disconnecting without a clean goodbye. There's nothing here worth
+  reinventing.
+- **The database is the actual source of correctness, not the
+  language.** OTP makes many concurrent processes cheap; it doesn't by
+  itself make "two people tap upvote in the same millisecond" come out
+  right. This app leans on Postgres for the guarantees that actually
+  matter under concurrency: a unique index, an atomic
+  `UPDATE ... SET vote_count = vote_count + 1`. See
   [ADR 2](docs/decisions/0002-database-enforced-voting.md).
-- **Let it crash, scoped tightly.** Every connected participant is their
-  own LiveView process. One phone's flaky connection, or a bug in
-  rendering one edge case, doesn't touch anyone else's session — there's
+- **Let it crash, scoped tightly.** Every connected participant is
+  their own LiveView process. One phone's flaky connection, or a bug in
+  rendering one edge case, can't touch anyone else's session. There's
   no shared mutable state between them to corrupt in the first place.
 
 ## How a vote travels: phone → database → every screen
@@ -88,8 +86,8 @@ graph LR
     Topic --> Proj["Projector screen<br/>(PresenterLive.Projector)"]
 ```
 
-The vote count itself is never computed by re-reading and incrementing
-in Elixir — `Repo.update_all/2` issues one atomic SQL statement, so two
+The vote count is never computed by re-reading and incrementing in
+Elixir. `Repo.update_all/2` issues one atomic SQL statement, so two
 simultaneous taps can never both read "5" and both write "6." See
 [ADR 2](docs/decisions/0002-database-enforced-voting.md).
 
@@ -128,10 +126,10 @@ mix dialyzer
 ## Deploying
 
 `Dockerfile` (multi-stage, `mix release`-based) and `fly.toml` are
-included. `fly.toml` is a template — `fly launch` and `fly secrets set
+included. `fly.toml` is a template; `fly launch` and `fly secrets set
 DATABASE_URL SECRET_KEY_BASE` are still required before `fly deploy`
-will work. Worth reading the comments in `fly.toml`: this app needs no
-extra work to run correctly across multiple machines — `dns_cluster`
+will work. The comments in `fly.toml` are worth reading: this app needs
+no extra work to run correctly across multiple machines. `dns_cluster`
 connects the nodes, and `Phoenix.PubSub`/`Phoenix.Presence` are already
 cluster-aware once they are, so `fly scale count 2` really is the whole
 multi-node story here.
@@ -159,19 +157,19 @@ touches `Repo` directly, every public context function has `@doc` +
   upvote button in the same few seconds would be better served by
   coalescing rapid changes into one broadcast per short window instead
   of one per tap.
-- **Running across multiple servers for real** — the pieces are already
+- **Running across multiple servers for real.** The pieces are already
   cluster-aware (see the deploying section above), but this has only
-  ever actually run as one node. Worth actually standing up two Fly
-  machines and confirming a vote cast against one reaches a participant
-  connected to the other.
+  ever actually run as one node. Worth standing up two Fly machines and
+  confirming a vote cast against one reaches a participant connected to
+  the other.
 - **AI grouping of similar questions.** A popular talk can end up with
-  five near-duplicate phrasings of the same question; clustering them
+  five near-duplicate phrasings of the same question. Clustering them
   (even just an LLM pass suggesting merges) would make the presenter's
   moderation queue and the projector's top-questions list more useful.
 - **CSV export** of an event's questions and poll results, for a
   presenter who wants the raw data afterward rather than just the
   in-app summary.
 - **A word-cloud poll type**, alongside the existing multiple-choice
-  polls — free-text answers aggregated into a live word cloud, for the
-  "what's one word to describe X" style of question multiple-choice
-  can't capture.
+  polls. Free-text answers aggregated into a live word cloud would
+  cover the "what's one word to describe X" style of question that
+  multiple-choice can't.
