@@ -1,0 +1,8 @@
+{
+  "name": "askroom-demo-recorder",
+  "private": true,
+  "description": "Playwright driver for scripts/record_demo. Not part of the app itself.",
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

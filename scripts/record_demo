@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+#
+# Records docs/demo.gif: a phone joining the demo event and a desktop
+# projector screen, side by side, watching a live poll vote cast on the
+# phone appear as a bar-chart update on the projector — no reload on
+# either side.
+#
+# One-time setup:
+#   brew install ffmpeg                 # or your OS's equivalent
+#   cd scripts && npm install           # installs Playwright
+#   npx playwright install chromium     # downloads the browser binary
+#
+# Then, from the repo root, with a local Postgres running:
+#   scripts/record_demo
+#
+# Safe to rerun any time — it resets the demo event's poll to its
+# original baseline vote counts on every run and leaves everything else
+# (the seeded presenter/questions) untouched. It starts its own
+# `mix phx.server` on :4000 and stops it when done; stop anything
+# already listening on :4000 first or it'll fail to bind.
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "==> Ensuring the dev database exists and is seeded"
+mix ecto.create >/dev/null
+mix ecto.migrate >/dev/null
+mix run priv/repo/seeds.exs >/dev/null
+
+echo "==> Resetting the demo event's poll to its baseline votes"
+RESET_OUTPUT=$(mix run scripts/reset_demo_poll.exs)
+EVENT_ID=$(echo "$RESET_OUTPUT" | grep "event id:" | grep -o '[0-9]*$')
+JOIN_CODE=$(echo "$RESET_OUTPUT" | grep "join code:" | awk '{print $NF}')
+
+echo "==> Starting a fresh phx.server on :4000"
+mix phx.server >/tmp/askroom_record_demo_server.log 2>&1 &
+SERVER_PID=$!
+trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+
+for _ in $(seq 1 30); do
+  curl -s -o /dev/null http://localhost:4000/ && break
+  sleep 1
+done
+
+echo "==> Recording with Playwright (event id $EVENT_ID, join code $JOIN_CODE)"
+cd scripts
+DEMO_EVENT_ID="$EVENT_ID" DEMO_JOIN_CODE="$JOIN_CODE" npm exec --yes -- node record_demo.mjs
+cd ..
+
+echo "==> Converting to docs/demo.gif"
+REC=scripts/tmp_demo_recording
+PALETTE=$(mktemp -t askroom_palette).png
+
+# Scale both clips to the same height before stacking — hstack requires
+# matching heights, and the two recordings have different aspect ratios
+# (phone-sized vs. desktop-sized viewports).
+STACK="[0:v]scale=-1:480[p];[1:v]scale=-1:480[d];[p][d]hstack=inputs=2,fps=12,scale=800:-1:flags=lanczos"
+
+ffmpeg -y -i "$REC/phone.webm" -i "$REC/desktop.webm" \
+  -filter_complex "${STACK},palettegen" \
+  "$PALETTE"
+
+ffmpeg -y -i "$REC/phone.webm" -i "$REC/desktop.webm" -i "$PALETTE" \
+  -filter_complex "${STACK}[x];[x][2:v]paletteuse" \
+  docs/demo.gif
+
+rm -f "$PALETTE"
+rm -rf "$REC"
+
+echo "==> Done: docs/demo.gif ($(du -h docs/demo.gif | cut -f1))"

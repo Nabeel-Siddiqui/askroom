@@ -1,19 +1,16 @@
 # Askroom
 
 Live Q&A and polling for talks and meetings. The audience joins on
-their phones with a short code (no account, no app download), asks
-questions, upvotes the ones they care about, and answers polls. Every
-screen in the room updates in real time, including the presenter's and
-a projector. Built end-to-end in Elixir/Phoenix/OTP as a portfolio
-project.
+their phones with a short code — no account, no app download — and
+every screen in the room, including the presenter's and a projector,
+updates in real time.
 
-**[Live demo](#) · [Screenshot / demo GIF: a phone and a laptop updating side by side](#)**
-*(placeholders, to fill in once deployed; see [fly.toml](fly.toml))*
+[![CI](https://github.com/Nabeel-Siddiqui/askroom/actions/workflows/ci.yml/badge.svg)](https://github.com/Nabeel-Siddiqui/askroom/actions)
 
-Log in with the seeded demo presenter (`demo@askroom.dev` /
-`demo-password-please-change`, created automatically by `mix setup`).
-A sample event with real questions and a live poll is already there;
-its join code is on the presenter's dashboard.
+**Runs locally in under 5 minutes** with seeded demo data. See
+[Running it locally](#running-it-locally).
+
+![Demo of Askroom: an audience member answering a live poll on a phone-sized window, with the result appearing instantly as a bar-chart update on the presenter's projector screen in the window beside it, no reload on either side](docs/demo.gif)
 
 ## What it does
 
@@ -34,46 +31,42 @@ its join code is on the presenter's dashboard.
 - A "projector" view (clean, full-screen, large text) shows whichever
   is more relevant on its own: a live poll's results while one's
   running, the top questions otherwise. No manual toggle.
-- A live "N people here now" count via `Phoenix.Presence`.
-- Closing an event freezes it and produces a summary: top questions,
-  final poll results. A nightly job closes anything left open more than
-  24 hours, so a forgotten event doesn't sit open indefinitely.
+- A live "N people here now" count via `Phoenix.Presence`. Closing an
+  event freezes it with a summary (top questions, final poll results),
+  and a nightly job closes anything left open more than 24 hours so a
+  forgotten event doesn't sit open indefinitely.
 
 ## Why Elixir for this, specifically
 
 This is a many-small-processes, many-live-updates problem: dozens to
 hundreds of independent phones and a couple of dashboards, all needing
-to see the same event's changes within milliseconds of each other, with
-no single request/response cycle that ever "finishes." That's close to
-the shape of problem the BEAM was built for. This app leans on that
-directly rather than incidentally.
+to see the same event's changes within milliseconds of each other. This
+app leans on that directly rather than incidentally.
 
-- **One PubSub topic per event, and every screen reacts through it, including the one that just took the action.**
-  A participant's own vote updates their own screen the same way it
-  updates everyone else's, through `Phoenix.PubSub`. There's no
-  separate, special-cased path for "my own update." That's one code
-  path to reason about instead of two, and LiveView makes it genuinely
-  easy to build this way. [ADR 3](docs/decisions/0003-per-event-pubsub-topics.md)
-  covers the sharp edge this creates in tests and why it's worth
-  understanding rather than working around.
-- **`Phoenix.Presence` handles the "who's here" count.** It already
-  solves the hard parts of that problem: merging presence state cleanly
-  if this app ever ran on more than one node, and handling a phone
-  disconnecting without a clean goodbye. There's nothing here worth
-  reinventing.
+- **No accounts for the audience, just a signed session.** A
+  `Participant` is a real database row, but it's never tied to a login —
+  its id lives in the visitor's session cookie, minted on first visit
+  and reused on every later one. Entering a code is the entire signup
+  flow, which matters for a tool people are meant to use within seconds
+  of opening their phone at a talk.
+  [ADR 1](docs/decisions/0001-anonymous-session-based-participants.md)
 - **The database is the actual source of correctness, not the
   language.** OTP makes many concurrent processes cheap; it doesn't by
   itself make "two people tap upvote in the same millisecond" come out
-  right. This app leans on Postgres for the guarantees that actually
-  matter under concurrency: a unique index, an atomic
-  `UPDATE ... SET vote_count = vote_count + 1`. See
-  [ADR 2](docs/decisions/0002-database-enforced-voting.md).
-- **Let it crash, scoped tightly.** Every connected participant is
-  their own LiveView process. One phone's flaky connection, or a bug in
-  rendering one edge case, can't touch anyone else's session. There's
-  no shared mutable state between them to corrupt in the first place.
+  right. This app leans on Postgres for the guarantees that matter under
+  concurrency: a unique index, an atomic `UPDATE ... SET vote_count =
+  vote_count + 1`.
+  [ADR 2](docs/decisions/0002-database-enforced-voting.md)
+- **One PubSub topic per event, and every screen reacts through it,
+  including the one that just took the action.** A participant's own
+  vote updates their own screen the same way it updates everyone
+  else's. There's no separate, special-cased path for "my own update" —
+  one code path to reason about instead of two.
+  [ADR 3](docs/decisions/0003-per-event-pubsub-topics.md)
 
-## How a vote travels: phone → database → every screen
+## Architecture
+
+A vote travels the same path every screen in the room is listening on:
 
 ```mermaid
 graph LR
@@ -86,22 +79,22 @@ graph LR
     Topic --> Proj["Projector screen<br/>(PresenterLive.Projector)"]
 ```
 
-The vote count is never computed by re-reading and incrementing in
-Elixir. `Repo.update_all/2` issues one atomic SQL statement, so two
-simultaneous taps can never both read "5" and both write "6." See
-[ADR 2](docs/decisions/0002-database-enforced-voting.md).
+Every connected participant is their own LiveView process. One phone's
+flaky connection, or a bug in rendering one edge case, can't touch
+anyone else's session — there's no shared mutable state between them to
+corrupt in the first place.
 
 ## Tech stack
 
 Phoenix 1.7 + LiveView · Ecto/Postgres · Oban (nightly stale-event
 cleanup) · Phoenix.Presence · eqrcode (server-rendered join QR codes) ·
 Credo (`--strict`) + Dialyzer in CI · GitHub Actions · Docker
-(`mix release`) · Fly.io.
+(`mix release`).
 
-## Running it locally (under 5 minutes)
+## Running it locally
 
-Prerequisites: Elixir 1.20+ / OTP 29 (see [`Dockerfile`](Dockerfile) for
-the exact versions this was built against) and a local Postgres.
+Prerequisites: Elixir 1.20.3 / OTP 29.0.5 (see [`Dockerfile`](Dockerfile)
+— any recent Elixir/OTP pair should work fine too) and a local Postgres.
 
 ```bash
 git clone <this-repo-url>
@@ -122,17 +115,6 @@ mix test                # 235 tests, no real network calls anywhere
 mix credo --strict
 mix dialyzer
 ```
-
-## Deploying
-
-`Dockerfile` (multi-stage, `mix release`-based) and `fly.toml` are
-included. `fly.toml` is a template; `fly launch` and `fly secrets set
-DATABASE_URL SECRET_KEY_BASE` are still required before `fly deploy`
-will work. The comments in `fly.toml` are worth reading: this app needs
-no extra work to run correctly across multiple machines. `dns_cluster`
-connects the nodes, and `Phoenix.PubSub`/`Phoenix.Presence` are already
-cluster-aware once they are, so `fly scale count 2` really is the whole
-multi-node story here.
 
 ## Design decisions
 
@@ -158,10 +140,10 @@ touches `Repo` directly, every public context function has `@doc` +
   coalescing rapid changes into one broadcast per short window instead
   of one per tap.
 - **Running across multiple servers for real.** The pieces are already
-  cluster-aware (see the deploying section above), but this has only
-  ever actually run as one node. Worth standing up two Fly machines and
-  confirming a vote cast against one reaches a participant connected to
-  the other.
+  cluster-aware (`dns_cluster`, and `Phoenix.PubSub`/`Phoenix.Presence`
+  are cluster-aware once connected), but this has only ever actually run
+  as one node. Worth standing up two machines and confirming a vote cast
+  against one reaches a participant connected to the other.
 - **AI grouping of similar questions.** A popular talk can end up with
   five near-duplicate phrasings of the same question. Clustering them
   (even just an LLM pass suggesting merges) would make the presenter's
