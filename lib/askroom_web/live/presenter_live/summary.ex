@@ -13,26 +13,15 @@ defmodule AskroomWeb.PresenterLive.Summary do
   alias Askroom.Events
 
   @impl true
-  def mount(%{"id" => id}, _session, socket) do
-    presenter = socket.assigns.current_presenter
+  def mount(_params, _session, socket) do
+    event = socket.assigns.event
+    polls = event |> Events.list_polls() |> Enum.reject(&(&1.status == :draft))
 
-    case Events.get_event(presenter, id) do
-      {:ok, event} ->
-        polls = event |> Events.list_polls() |> Enum.reject(&(&1.status == :draft))
-
-        {:ok,
-         socket
-         |> assign(:page_title, "#{event.title} — summary")
-         |> assign(:event, event)
-         |> assign(:questions, Events.list_questions(event))
-         |> assign(:polls, Enum.map(polls, &{&1, Events.poll_results(&1)}))}
-
-      {:error, :not_found} ->
-        {:ok,
-         socket
-         |> put_flash(:error, "That event doesn't exist.")
-         |> push_navigate(to: ~p"/dashboard")}
-    end
+    {:ok,
+     socket
+     |> assign(:page_title, "#{event.title} — summary")
+     |> assign(:questions, Events.list_questions(event))
+     |> assign(:polls, Enum.map(polls, &{&1, Events.poll_results(&1)}))}
   end
 
   @impl true

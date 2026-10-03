@@ -16,26 +16,15 @@ defmodule AskroomWeb.PresenterLive.Projector do
   @top_questions_limit 5
 
   @impl true
-  def mount(%{"id" => id}, _session, socket) do
-    presenter = socket.assigns.current_presenter
+  def mount(_params, _session, socket) do
+    event = socket.assigns.event
+    if connected?(socket), do: Events.subscribe(event)
 
-    case Events.get_event(presenter, id) do
-      {:ok, event} ->
-        if connected?(socket), do: Events.subscribe(event)
-
-        {:ok,
-         socket
-         |> assign(:page_title, "#{event.title} — projector")
-         |> assign(:event, event)
-         |> assign(:top_questions, top_questions(event))
-         |> show_poll(Events.current_live_poll(event))}
-
-      {:error, :not_found} ->
-        {:ok,
-         socket
-         |> put_flash(:error, "That event doesn't exist.")
-         |> push_navigate(to: ~p"/dashboard")}
-    end
+    {:ok,
+     socket
+     |> assign(:page_title, "#{event.title} — projector")
+     |> assign(:top_questions, top_questions(event))
+     |> show_poll(Events.current_live_poll(event))}
   end
 
   @impl true

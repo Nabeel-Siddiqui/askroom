@@ -21,31 +21,20 @@ defmodule AskroomWeb.PresenterLive.Show do
   alias AskroomWeb.Presence
 
   @impl true
-  def mount(%{"id" => id}, _session, socket) do
-    presenter = socket.assigns.current_presenter
+  def mount(_params, _session, socket) do
+    event = socket.assigns.event
+    if connected?(socket), do: Events.subscribe(event)
 
-    case Events.get_event(presenter, id) do
-      {:ok, event} ->
-        if connected?(socket), do: Events.subscribe(event)
+    displayed_poll = Events.current_live_poll(event) || List.first(Events.list_polls(event))
 
-        displayed_poll = Events.current_live_poll(event) || List.first(Events.list_polls(event))
-
-        {:ok,
-         socket
-         |> assign(:page_title, event.title)
-         |> assign(:event, event)
-         |> assign(:poll_form, to_form(%{"question_text" => "", "options" => ""}, as: "poll"))
-         |> assign(:questions, Events.list_questions_for_presenter(event))
-         |> assign(:polls, Events.list_polls(event))
-         |> assign(:presence_count, Presence.list(Events.presence_topic(event)) |> map_size())
-         |> show_poll(displayed_poll)}
-
-      {:error, :not_found} ->
-        {:ok,
-         socket
-         |> put_flash(:error, "That event doesn't exist.")
-         |> push_navigate(to: ~p"/dashboard")}
-    end
+    {:ok,
+     socket
+     |> assign(:page_title, event.title)
+     |> assign(:poll_form, to_form(%{"question_text" => "", "options" => ""}, as: "poll"))
+     |> assign(:questions, Events.list_questions_for_presenter(event))
+     |> assign(:polls, Events.list_polls(event))
+     |> assign(:presence_count, Presence.list(Events.presence_topic(event)) |> map_size())
+     |> show_poll(displayed_poll)}
   end
 
   @impl true
@@ -86,21 +75,11 @@ defmodule AskroomWeb.PresenterLive.Show do
     end
   end
 
-  def handle_event("launch_poll", %{"id" => id}, socket) do
-    with {:ok, poll} <- Events.get_poll(socket.assigns.event, id) do
-      Events.launch_poll(socket.assigns.current_presenter, socket.assigns.event, poll)
-    end
+  def handle_event("launch_poll", %{"id" => id}, socket),
+    do: poll_action(socket, id, &Events.launch_poll/3)
 
-    {:noreply, socket}
-  end
-
-  def handle_event("close_poll", %{"id" => id}, socket) do
-    with {:ok, poll} <- Events.get_poll(socket.assigns.event, id) do
-      Events.close_poll(socket.assigns.current_presenter, socket.assigns.event, poll)
-    end
-
-    {:noreply, socket}
-  end
+  def handle_event("close_poll", %{"id" => id}, socket),
+    do: poll_action(socket, id, &Events.close_poll/3)
 
   defp moderate(socket, id, fun) do
     presenter = socket.assigns.current_presenter
@@ -108,6 +87,17 @@ defmodule AskroomWeb.PresenterLive.Show do
 
     with {:ok, question} <- Events.get_question(event, id) do
       fun.(presenter, event, question)
+    end
+
+    {:noreply, socket}
+  end
+
+  defp poll_action(socket, id, fun) do
+    presenter = socket.assigns.current_presenter
+    event = socket.assigns.event
+
+    with {:ok, poll} <- Events.get_poll(event, id) do
+      fun.(presenter, event, poll)
     end
 
     {:noreply, socket}

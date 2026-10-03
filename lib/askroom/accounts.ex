@@ -22,6 +22,7 @@ defmodule Askroom.Accounts do
       nil
 
   """
+  @spec get_presenter_by_email(String.t()) :: Presenter.t() | nil
   def get_presenter_by_email(email) when is_binary(email) do
     Repo.get_by(Presenter, email: email)
   end
@@ -38,6 +39,7 @@ defmodule Askroom.Accounts do
       nil
 
   """
+  @spec get_presenter_by_email_and_password(String.t(), String.t()) :: Presenter.t() | nil
   def get_presenter_by_email_and_password(email, password)
       when is_binary(email) and is_binary(password) do
     presenter = Repo.get_by(Presenter, email: email)
@@ -58,6 +60,7 @@ defmodule Askroom.Accounts do
       ** (Ecto.NoResultsError)
 
   """
+  @spec get_presenter!(term()) :: Presenter.t()
   def get_presenter!(id), do: Repo.get!(Presenter, id)
 
   ## Presenter registration
@@ -74,6 +77,7 @@ defmodule Askroom.Accounts do
       {:error, %Ecto.Changeset{}}
 
   """
+  @spec register_presenter(map()) :: {:ok, Presenter.t()} | {:error, Ecto.Changeset.t()}
   def register_presenter(attrs) do
     %Presenter{}
     |> Presenter.registration_changeset(attrs)
@@ -89,6 +93,7 @@ defmodule Askroom.Accounts do
       %Ecto.Changeset{data: %Presenter{}}
 
   """
+  @spec change_presenter_registration(Presenter.t(), map()) :: Ecto.Changeset.t()
   def change_presenter_registration(%Presenter{} = presenter, attrs \\ %{}) do
     Presenter.registration_changeset(presenter, attrs,
       hash_password: false,
@@ -107,6 +112,7 @@ defmodule Askroom.Accounts do
       %Ecto.Changeset{data: %Presenter{}}
 
   """
+  @spec change_presenter_email(Presenter.t(), map()) :: Ecto.Changeset.t()
   def change_presenter_email(presenter, attrs \\ %{}) do
     Presenter.email_changeset(presenter, attrs, validate_email: false)
   end
@@ -124,6 +130,8 @@ defmodule Askroom.Accounts do
       {:error, %Ecto.Changeset{}}
 
   """
+  @spec apply_presenter_email(Presenter.t(), String.t(), map()) ::
+          {:ok, Presenter.t()} | {:error, Ecto.Changeset.t()}
   def apply_presenter_email(presenter, password, attrs) do
     presenter
     |> Presenter.email_changeset(attrs)
@@ -137,6 +145,7 @@ defmodule Askroom.Accounts do
   If the token matches, the presenter email is updated and the token is deleted.
   The confirmed_at date is also updated to the current time.
   """
+  @spec update_presenter_email(Presenter.t(), String.t()) :: :ok | :error
   def update_presenter_email(presenter, token) do
     context = "change:#{presenter.email}"
 
@@ -172,6 +181,11 @@ defmodule Askroom.Accounts do
       {:ok, %{to: ..., body: ...}}
 
   """
+  @spec deliver_presenter_update_email_instructions(
+          Presenter.t(),
+          String.t(),
+          (String.t() -> String.t())
+        ) :: {:ok, Swoosh.Email.t()} | {:error, term()}
   def deliver_presenter_update_email_instructions(
         %Presenter{} = presenter,
         current_email,
@@ -198,6 +212,7 @@ defmodule Askroom.Accounts do
       %Ecto.Changeset{data: %Presenter{}}
 
   """
+  @spec change_presenter_password(Presenter.t(), map()) :: Ecto.Changeset.t()
   def change_presenter_password(presenter, attrs \\ %{}) do
     Presenter.password_changeset(presenter, attrs, hash_password: false)
   end
@@ -214,6 +229,8 @@ defmodule Askroom.Accounts do
       {:error, %Ecto.Changeset{}}
 
   """
+  @spec update_presenter_password(Presenter.t(), String.t(), map()) ::
+          {:ok, Presenter.t()} | {:error, Ecto.Changeset.t()}
   def update_presenter_password(presenter, password, attrs) do
     changeset =
       presenter
@@ -238,6 +255,7 @@ defmodule Askroom.Accounts do
   @doc """
   Generates a session token.
   """
+  @spec generate_presenter_session_token(Presenter.t()) :: binary()
   def generate_presenter_session_token(presenter) do
     {token, presenter_token} = PresenterToken.build_session_token(presenter)
     Repo.insert!(presenter_token)
@@ -247,6 +265,7 @@ defmodule Askroom.Accounts do
   @doc """
   Gets the presenter with the given signed token.
   """
+  @spec get_presenter_by_session_token(binary()) :: Presenter.t() | nil
   def get_presenter_by_session_token(token) do
     {:ok, query} = PresenterToken.verify_session_token_query(token)
     Repo.one(query)
@@ -255,6 +274,7 @@ defmodule Askroom.Accounts do
   @doc """
   Deletes the signed token with the given context.
   """
+  @spec delete_presenter_session_token(binary()) :: :ok
   def delete_presenter_session_token(token) do
     Repo.delete_all(PresenterToken.by_token_and_context_query(token, "session"))
     :ok
@@ -274,6 +294,8 @@ defmodule Askroom.Accounts do
       {:error, :already_confirmed}
 
   """
+  @spec deliver_presenter_confirmation_instructions(Presenter.t(), (String.t() -> String.t())) ::
+          {:ok, Swoosh.Email.t()} | {:error, term()} | {:error, :already_confirmed}
   def deliver_presenter_confirmation_instructions(%Presenter{} = presenter, confirmation_url_fun)
       when is_function(confirmation_url_fun, 1) do
     if presenter.confirmed_at do
@@ -295,6 +317,7 @@ defmodule Askroom.Accounts do
   If the token matches, the presenter account is marked as confirmed
   and the token is deleted.
   """
+  @spec confirm_presenter(binary()) :: {:ok, Presenter.t()} | :error
   def confirm_presenter(token) do
     with {:ok, query} <- PresenterToken.verify_email_token_query(token, "confirm"),
          %Presenter{} = presenter <- Repo.one(query),
@@ -325,6 +348,8 @@ defmodule Askroom.Accounts do
       {:ok, %{to: ..., body: ...}}
 
   """
+  @spec deliver_presenter_reset_password_instructions(Presenter.t(), (String.t() -> String.t())) ::
+          {:ok, Swoosh.Email.t()} | {:error, term()}
   def deliver_presenter_reset_password_instructions(
         %Presenter{} = presenter,
         reset_password_url_fun
@@ -353,6 +378,7 @@ defmodule Askroom.Accounts do
       nil
 
   """
+  @spec get_presenter_by_reset_password_token(binary()) :: Presenter.t() | nil
   def get_presenter_by_reset_password_token(token) do
     with {:ok, query} <- PresenterToken.verify_email_token_query(token, "reset_password"),
          %Presenter{} = presenter <- Repo.one(query) do
@@ -374,6 +400,8 @@ defmodule Askroom.Accounts do
       {:error, %Ecto.Changeset{}}
 
   """
+  @spec reset_presenter_password(Presenter.t(), map()) ::
+          {:ok, Presenter.t()} | {:error, Ecto.Changeset.t()}
   def reset_presenter_password(presenter, attrs) do
     Ecto.Multi.new()
     |> Ecto.Multi.update(:presenter, Presenter.password_changeset(presenter, attrs))

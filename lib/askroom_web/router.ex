@@ -79,6 +79,13 @@ defmodule AskroomWeb.Router do
       live "/presenters/settings/confirm_email/:token", PresenterSettingsLive, :confirm_email
 
       live "/dashboard", PresenterLive.Dashboard, :index
+    end
+
+    live_session :presenter_event,
+      on_mount: [
+        {AskroomWeb.PresenterAuth, :ensure_authenticated},
+        {AskroomWeb.PresenterLive.EventScope, :assign_event}
+      ] do
       live "/dashboard/events/:id", PresenterLive.Show, :show
       live "/dashboard/events/:id/projector", PresenterLive.Projector, :show
       live "/dashboard/events/:id/summary", PresenterLive.Summary, :show
