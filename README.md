@@ -63,6 +63,12 @@ app leans on that directly rather than incidentally.
   else's. There's no separate, special-cased path for "my own update" —
   one code path to reason about instead of two.
   [ADR 3](docs/decisions/0003-per-event-pubsub-topics.md)
+- **A burst of votes broadcasts once, not once per tap.** A small
+  supervised process coalesces every vote on an event within a short
+  window into a single broadcast, so a popular question getting
+  hammered with upvotes doesn't turn into one full requery per tap on
+  every connected screen.
+  [ADR 4](docs/decisions/0004-coalesce-vote-broadcasts.md)
 
 ## Architecture
 
@@ -111,20 +117,21 @@ sides live at once.
 To verify the whole thing end to end:
 
 ```bash
-mix test                # 235 tests, no real network calls anywhere
+mix test                # 241 tests, no real network calls anywhere
 mix credo --strict
 mix dialyzer
 ```
 
 ## Design decisions
 
-Three of the less-obvious calls made building this are written up in
+Four of the less-obvious calls made building this are written up in
 [`docs/decisions/`](docs/decisions/), each with the alternative
 considered and why it lost:
 
 1. [Anonymous, session-based participants — no accounts for the audience](docs/decisions/0001-anonymous-session-based-participants.md)
 2. [Database-enforced voting rules, with atomic counters](docs/decisions/0002-database-enforced-voting.md)
 3. [One PubSub topic per event, and every screen reacts through it](docs/decisions/0003-per-event-pubsub-topics.md)
+4. [Vote broadcasts are coalesced into one per short window, not one per vote](docs/decisions/0004-coalesce-vote-broadcasts.md)
 
 `CLAUDE.md` in the repo root has the conventions every phase of this
 build held to (contexts own all business logic, the web layer never
@@ -133,12 +140,6 @@ touches `Repo` directly, every public context function has `@doc` +
 
 ## What I'd do next
 
-- **Batching broadcasts under vote bursts.** Right now every single vote
-  triggers its own broadcast and a full requery on every subscriber.
-  Fine for one talk's audience; a much larger crowd hammering the
-  upvote button in the same few seconds would be better served by
-  coalescing rapid changes into one broadcast per short window instead
-  of one per tap.
 - **Running across multiple servers for real.** The pieces are already
   cluster-aware (`dns_cluster`, and `Phoenix.PubSub`/`Phoenix.Presence`
   are cluster-aware once connected), but this has only ever actually run

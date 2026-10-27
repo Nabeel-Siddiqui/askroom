@@ -61,6 +61,12 @@ config :logger, :console,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# How long Askroom.Events.VoteBroadcaster waits after the first vote
+# in a burst before broadcasting once for all of them. Short in test
+# (see config/test.exs) so a test isn't stuck actually waiting out a
+# fifth of a second.
+config :askroom, vote_broadcast_coalesce_ms: 200
+
 # The "maintenance" queue is for the nightly stale-event cleanup job
 # (Phase 4) — kept separate from any future user-triggered queue so a
 # burst of one never delays the other.

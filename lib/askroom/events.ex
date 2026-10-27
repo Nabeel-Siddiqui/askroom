@@ -11,7 +11,7 @@ defmodule Askroom.Events do
   import Ecto.Query, warn: false
 
   alias Askroom.Accounts.Presenter
-  alias Askroom.Events.{Event, Participant, Poll, PollAnswer, Question, Vote}
+  alias Askroom.Events.{Event, Participant, Poll, PollAnswer, Question, Vote, VoteBroadcaster}
   alias Askroom.Repo
 
   @max_join_code_attempts 5
@@ -501,12 +501,24 @@ defmodule Askroom.Events do
     end)
     |> case do
       {:ok, {status, updated_question}} ->
-        broadcast(question.event_id, {:question_voted, updated_question})
+        VoteBroadcaster.notify(question.event_id)
         {:ok, status, updated_question}
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  @doc """
+  Broadcasts that at least one vote changed somewhere in `event_id`.
+  Not meant to be called directly outside of `VoteBroadcaster` — the
+  real entry point for a vote is `toggle_vote/2`, which notifies the
+  broadcaster rather than calling this itself, so that many votes in
+  quick succession coalesce into one broadcast instead of one each.
+  """
+  @spec broadcast_question_voted(pos_integer()) :: :ok
+  def broadcast_question_voted(event_id) do
+    broadcast(event_id, {:question_voted, event_id})
   end
 
   defp cast_vote(participant, question) do

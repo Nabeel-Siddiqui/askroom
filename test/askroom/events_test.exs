@@ -446,17 +446,36 @@ defmodule Askroom.EventsTest do
       assert Repo.aggregate(Vote, :count) == 1
     end
 
-    test "broadcasts the updated question on vote and unvote" do
+    test "coalesces rapid votes on the same event into one broadcast" do
       event = event_fixture()
       participant = participant_fixture(event)
       question = question_fixture(event, participant_fixture(event))
       :ok = Events.subscribe(event)
 
-      {:ok, :voted, voted} = Events.toggle_vote(participant, question)
-      assert_receive {:question_voted, ^voted}
+      {:ok, :voted, _voted} = Events.toggle_vote(participant, question)
+      {:ok, :unvoted, _unvoted} = Events.toggle_vote(participant, question)
 
-      {:ok, :unvoted, unvoted} = Events.toggle_vote(participant, question)
-      assert_receive {:question_voted, ^unvoted}
+      assert_receive {:question_voted, event_id}
+      assert event_id == event.id
+      refute_receive {:question_voted, _}
+    end
+
+    test "votes far enough apart each get their own broadcast" do
+      event = event_fixture()
+      participant = participant_fixture(event)
+      question = question_fixture(event, participant_fixture(event))
+      :ok = Events.subscribe(event)
+
+      # The gap has to genuinely outlast the coalescing window (see
+      # config/test.exs) — this is the one place in the suite where a
+      # real sleep is the thing actually under test, not something to
+      # synchronize around.
+      {:ok, :voted, _} = Events.toggle_vote(participant, question)
+      assert_receive {:question_voted, _}
+      Process.sleep(50)
+
+      {:ok, :unvoted, _} = Events.toggle_vote(participant, question)
+      assert_receive {:question_voted, _}
     end
 
     test "concurrent upvotes from many participants converge on the correct count" do

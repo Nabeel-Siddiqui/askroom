@@ -100,15 +100,19 @@ defmodule AskroomWeb.AudienceLiveTest do
       {:ok, view, html} = live(conn, ~p"/e/#{event.join_code}")
       assert html =~ ">0<"
 
-      # Same reasoning as the question-submission test above: the click
-      # itself only returns handle_event's synchronous reply, so the
-      # updated count — which arrives via this view's own PubSub
-      # broadcast landing back on itself — is only visible on a
-      # following render/1 call.
+      # The click itself only returns handle_event's synchronous reply.
+      # The updated count arrives via this view's own PubSub broadcast
+      # landing back on itself — coalesced through
+      # Askroom.Events.VoteBroadcaster now (see ADR 4) rather than fired
+      # synchronously from toggle_vote/2, so it's only visible after
+      # both a following render/1 call and waiting out the coalescing
+      # window (short in test — see config/test.exs).
       view |> element("button[phx-value-id='#{question.id}']") |> render_click()
+      wait_for_vote_broadcast()
       assert render(view) =~ ">1<"
 
       view |> element("button[phx-value-id='#{question.id}']") |> render_click()
+      wait_for_vote_broadcast()
       assert render(view) =~ ">0<"
     end
 
@@ -158,6 +162,7 @@ defmodule AskroomWeb.AudienceLiveTest do
       assert html_b =~ ">0<"
 
       view_a |> element("button[phx-value-id='#{question.id}']") |> render_click()
+      wait_for_vote_broadcast()
 
       assert render(view_b) =~ ">1<"
     end
@@ -242,4 +247,8 @@ defmodule AskroomWeb.AudienceLiveTest do
       refute render(view) =~ "This event has ended"
     end
   end
+
+  # Longer than config/test.exs's vote_broadcast_coalesce_ms, so the
+  # coalesced broadcast has genuinely landed before the next render/1.
+  defp wait_for_vote_broadcast, do: Process.sleep(30)
 end

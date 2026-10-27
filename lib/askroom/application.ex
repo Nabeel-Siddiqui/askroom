@@ -16,6 +16,7 @@ defmodule Askroom.Application do
       {Finch, name: Askroom.Finch},
       {Oban, Application.fetch_env!(:askroom, Oban)},
       AskroomWeb.Presence,
+      Askroom.Events.VoteBroadcaster,
       # Start to serve requests, typically the last entry
       AskroomWeb.Endpoint
     ]

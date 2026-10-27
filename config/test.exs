@@ -51,3 +51,8 @@ config :phoenix_live_view,
 # uniqueness/argument assertions still work) but never picked up by a
 # real queue. Tests trigger perform/1 explicitly via Oban.Testing.
 config :askroom, Oban, testing: :manual
+
+# Short enough that assert_receive's default 100ms timeout comfortably
+# outlasts it, long enough to still genuinely coalesce back-to-back
+# calls in the same test.
+config :askroom, vote_broadcast_coalesce_ms: 10
